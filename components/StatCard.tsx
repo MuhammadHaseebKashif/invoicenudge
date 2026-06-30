@@ -5,6 +5,7 @@ interface Props {
   value: string;
   icon: LucideIcon;
   color: string;
+  loading?: boolean;
 }
 
 export default function StatCard({
@@ -12,6 +13,7 @@ export default function StatCard({
   value,
   icon: Icon,
   color,
+  loading = false,
 }: Props) {
   return (
     <div className="rounded-xl bg-white p-6 shadow-md transition hover:shadow-xl">
@@ -19,13 +21,19 @@ export default function StatCard({
         <div>
           <p className="text-gray-500">{title}</p>
 
-          <h2 className="mt-2 text-3xl font-bold">
-            {value}
-          </h2>
+          {loading ? (
+            <div className="mt-2 h-8 w-16 animate-pulse rounded bg-gray-200" />
+          ) : (
+            <h2 className="mt-2 text-3xl font-bold">
+              {value}
+            </h2>
+          )}
         </div>
 
         <div
-          className={`rounded-full p-4 ${color}`}
+          className={`rounded-full p-4 ${color} ${
+            loading ? "animate-pulse opacity-60" : ""
+          }`}
         >
           <Icon
             className="text-white"
