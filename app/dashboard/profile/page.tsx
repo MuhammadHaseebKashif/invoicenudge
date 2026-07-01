@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { supabase } from "../../../lib/supabase";
+import { supabase } from "@/lib/supabase";
 import {
   UserCircle,
   Mail,
@@ -11,6 +11,9 @@ import {
   EyeOff,
   CheckCircle2,
   XCircle,
+  FileText,
+  Image as ImageIcon,
+  Upload,
 } from "lucide-react";
 import toast from "react-hot-toast";
 
@@ -18,16 +21,21 @@ export default function ProfilePage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [updatingPassword, setUpdatingPassword] = useState(false);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
 
   const [userId, setUserId] = useState("");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const [description, setDescription] = useState("");
+  const [avatarUrl, setAvatarUrl] = useState("");
   const [createdAt, setCreatedAt] = useState("");
 
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+
+  const [initialState, setInitialState] = useState("");
 
   useEffect(() => {
     loadProfile();
@@ -55,9 +63,62 @@ export default function ProfilePage() {
 
     if (!error && data) {
       setName(data.name || "");
+      setDescription(data.description || "");
+      setAvatarUrl(data.avatar_url || "");
+
+      setInitialState(
+        JSON.stringify({
+          name: data.name || "",
+          description: data.description || "",
+          avatarUrl: data.avatar_url || "",
+        })
+      );
     }
 
     setLoading(false);
+  }
+
+  const currentState = JSON.stringify({
+    name,
+    description,
+    avatarUrl,
+  });
+
+  const hasUnsavedChanges = initialState && currentState !== initialState;
+
+  async function handleAvatarUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error("Image must be less than 5MB");
+      return;
+    }
+
+    setUploadingAvatar(true);
+
+    try {
+      const fileExt = file.name.split(".").pop();
+      const fileName = `${userId}-${Date.now()}.${fileExt}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from("avatars")
+        .upload(fileName, file, { upsert: true });
+
+      if (uploadError) {
+        toast.error("Failed to upload image");
+        setUploadingAvatar(false);
+        return;
+      }
+
+      const { data } = supabase.storage.from("avatars").getPublicUrl(fileName);
+      setAvatarUrl(data.publicUrl);
+      toast.success("Avatar uploaded successfully!");
+    } catch (err) {
+      toast.error("Failed to upload avatar");
+    } finally {
+      setUploadingAvatar(false);
+    }
   }
 
   async function updateProfile() {
@@ -68,26 +129,32 @@ export default function ProfilePage() {
 
     setSaving(true);
 
-    const { error } = await supabase.from("profiles").upsert({
-      id: userId,
-      name,
-      email,
-    });
+    try {
+      const { error } = await supabase.from("profiles").upsert({
+        id: userId,
+        name,
+        description,
+        avatar_url: avatarUrl,
+        email,
+      });
 
-    setSaving(false);
+      if (error) {
+        toast.error(error.message);
+        setSaving(false);
+        return;
+      }
 
-    if (error) {
-      toast.error(error.message);
-      return;
+      setInitialState(currentState);
+      toast.success("Profile updated successfully!");
+    } catch (err) {
+      toast.error("Failed to update profile");
+    } finally {
+      setSaving(false);
     }
-
-    toast.success("Profile updated successfully.");
   }
 
-  // Password strength logic
   function getPasswordStrength(pwd: string) {
     if (!pwd) return { label: "", score: 0, color: "" };
-
     let score = 0;
     if (pwd.length >= 6) score++;
     if (pwd.length >= 10) score++;
@@ -174,15 +241,23 @@ export default function ProfilePage() {
   }
 
   return (
-    <div className="mx-auto max-w-4xl space-y-6">
+    <div className="mx-auto max-w-4xl space-y-6 pb-24">
       {/* Profile header banner */}
       <div className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-100">
         <div className="h-24 bg-gradient-to-r from-blue-600 to-blue-400" />
         <div className="flex flex-col gap-4 px-8 pb-8 sm:flex-row sm:items-end sm:justify-between">
           <div className="flex items-end gap-4">
-            <div className="-mt-10 flex h-20 w-20 items-center justify-center rounded-2xl border-4 border-white bg-blue-600 text-2xl font-bold text-white shadow-md">
-              {getInitials(name, email)}
-            </div>
+            {avatarUrl ? (
+              <img
+                src={avatarUrl}
+                alt={name}
+                className="-mt-10 h-20 w-20 rounded-2xl border-4 border-white object-cover shadow-md"
+              />
+            ) : (
+              <div className="-mt-10 flex h-20 w-20 items-center justify-center rounded-2xl border-4 border-white bg-blue-600 text-2xl font-bold text-white shadow-md">
+                {getInitials(name, email)}
+              </div>
+            )}
             <div className="pb-1">
               <h1 className="text-xl font-bold text-gray-900">
                 {name || "Unnamed User"}
@@ -209,12 +284,53 @@ export default function ProfilePage() {
               Account Information
             </h2>
             <p className="text-sm text-gray-500">
-              Update your name and view your account email.
+              Update your profile information.
             </p>
           </div>
         </div>
 
         <div className="grid gap-5">
+          {/* Avatar Upload */}
+          <div>
+            <label className="mb-1.5 flex items-center gap-1.5 text-sm font-medium text-gray-700">
+              <ImageIcon size={14} className="text-gray-400" />
+              Profile Picture
+            </label>
+            <div className="flex items-center gap-4">
+              <div className="flex-shrink-0">
+                {avatarUrl ? (
+                  <img
+                    src={avatarUrl}
+                    alt={name}
+                    className="h-16 w-16 rounded-lg border border-gray-200 object-cover"
+                  />
+                ) : (
+                  <div className="flex h-16 w-16 items-center justify-center rounded-lg border border-gray-200 bg-gray-100">
+                    <UserCircle className="text-gray-400" size={32} />
+                  </div>
+                )}
+              </div>
+              <label className="flex-1 cursor-pointer">
+                <div className="flex items-center justify-center gap-2 rounded-lg border-2 border-dashed border-gray-200 px-4 py-6 hover:border-blue-400 hover:bg-blue-50 transition">
+                  <Upload size={16} className="text-gray-400" />
+                  <span className="text-sm text-gray-500">
+                    {uploadingAvatar ? "Uploading..." : "Click to upload"}
+                  </span>
+                </div>
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={handleAvatarUpload}
+                  disabled={uploadingAvatar}
+                  className="hidden"
+                />
+              </label>
+            </div>
+            <p className="mt-1.5 text-xs text-gray-400">
+              PNG, JPG up to 5MB. Max 1000x1000px.
+            </p>
+          </div>
+
           <div>
             <label className="mb-1.5 block text-sm font-medium text-gray-700">
               Full Name
@@ -224,6 +340,20 @@ export default function ProfilePage() {
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="Enter your full name"
+              className="w-full rounded-lg border border-gray-200 p-3 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+            />
+          </div>
+
+          <div>
+            <label className="mb-1.5 flex items-center gap-1.5 text-sm font-medium text-gray-700">
+              <FileText size={14} className="text-gray-400" />
+              Bio / Description
+            </label>
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Tell us about yourself..."
+              rows={4}
               className="w-full rounded-lg border border-gray-200 p-3 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
             />
           </div>
@@ -247,15 +377,17 @@ export default function ProfilePage() {
                 className="w-full cursor-not-allowed rounded-lg border border-gray-200 bg-gray-50 p-3 pl-10 text-sm text-gray-500"
               />
             </div>
-            <p className="mt-1.5 text-xs text-gray-400">
-              Contact support if you need to change your email address.
-            </p>
           </div>
 
-          <div className="flex justify-end pt-2">
+          <div className="flex justify-end gap-3 pt-2">
+            {hasUnsavedChanges && (
+              <span className="text-sm text-orange-600 font-medium">
+                Unsaved changes
+              </span>
+            )}
             <button
               onClick={updateProfile}
-              disabled={saving}
+              disabled={saving || !hasUnsavedChanges}
               className="rounded-lg bg-blue-600 px-6 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-300"
             >
               {saving ? "Saving..." : "Save Changes"}
@@ -264,7 +396,7 @@ export default function ProfilePage() {
         </div>
       </div>
 
-      {/* Password section */}
+      {/* Password section (same as before) */}
       <div className="rounded-2xl bg-white p-8 shadow-sm ring-1 ring-gray-100">
         <div className="mb-6 flex items-center gap-3">
           <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-green-50">
