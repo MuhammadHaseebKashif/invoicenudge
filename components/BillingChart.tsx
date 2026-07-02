@@ -12,11 +12,15 @@ import {
 
 interface Props {
   data: any[];
+  currency: string;
 }
 
 export default function BillingChart({
   data,
+  currency,
 }: Props) {
+  const symbol = currency === "PKR" ? "Rs " : "$";
+
   return (
     <div className="rounded-xl bg-white p-6 shadow">
 
@@ -36,7 +40,9 @@ export default function BillingChart({
 
           <YAxis />
 
-          <Tooltip />
+          <Tooltip
+            formatter={(value: any) => [`${symbol}${value}`, "Amount"]}
+          />
 
           <Bar
             dataKey="amount"
