@@ -1,260 +1,651 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import Link from "next/link";
+import { supabase } from "@/lib/supabase";
+import html2canvas from "html2canvas-pro";
 import jsPDF from "jspdf";
-import { supabase } from "../../../../lib/supabase";
+import toast from "react-hot-toast";
+import InvoiceTemplate from "@/components/InvoiceTemplate";
+import { Download, Edit2, Save, X, Plus, Trash2, Printer } from "lucide-react";
 
-interface Invoice {
-  id: number;
-  client_name: string;
-  client_email: string;
-  amount: number;
-  due_date: string;
-  status: string;
-  tone: string;
+interface InvoiceItem {
+  id: string;
+  description: string;
+  details: string;
+  rate: number;
+  qty: number;
+  price: number;
 }
 
-export default function InvoiceDetailsPage() {
+interface Invoice {
+  id: string;
+  invoice_number: string;
+  issue_date: string;
+  due_date: string;
+  client_name: string;
+  client_email: string;
+  client_address: string;
+  description: string;
+  items: InvoiceItem[];
+  subtotal: number;
+  vat: number;
+  total: number;
+  notes: string;
+  status: string;
+}
+
+interface UserProfile {
+  name: string;
+  email: string;
+  avatar_url: string;
+  company_name?: string;
+  company_phone?: string;
+  company_address?: string;
+  company_website?: string;
+}
+
+export default function InvoiceDetailPage() {
   const params = useParams();
   const router = useRouter();
+  const invoiceId = params.id as string;
+  const invoiceRef = useRef<HTMLDivElement>(null);
 
-  const [loading, setLoading] = useState(true);
   const [invoice, setInvoice] = useState<Invoice | null>(null);
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [isEditing, setIsEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  const [formData, setFormData] = useState<Invoice | null>(null);
 
   useEffect(() => {
-    fetchInvoice();
-  }, []);
+    loadData();
+  }, [invoiceId]);
 
-  async function fetchInvoice() {
-    const { data, error } = await supabase
-      .from("invoices")
-      .select("*")
-      .eq("id", params.id)
-      .single();
+  async function loadData() {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        router.push("/");
+        return;
+      }
 
-    if (!error) {
-      setInvoice(data);
+      // Load user profile
+      const { data: profileData } = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("id", user.id)
+        .single();
+
+      if (profileData) {
+        setUserProfile(profileData);
+      }
+
+      // Load invoice
+      const { data: invoiceData, error } = await supabase
+        .from("invoices")
+        .select("*")
+        .eq("id", invoiceId)
+        .eq("user_id", user.id)
+        .single();
+
+      if (error) {
+        console.error("Invoice load error:", error);
+        toast.error("Failed to load invoice");
+        router.push("/dashboard/invoices");
+        return;
+      }
+
+      setInvoice(invoiceData);
+      setFormData(invoiceData);
+      setIsEditing(false);
+    } catch (err) {
+      console.error("Error loading data:", err);
+      toast.error("Error loading invoice");
+    } finally {
+      setLoading(false);
     }
-
-    setLoading(false);
   }
 
-  async function deleteInvoice() {
-    const ok = confirm(
-      "Are you sure you want to delete this invoice?"
-    );
-
-    if (!ok) return;
-
-    const { error } = await supabase
-      .from("invoices")
-      .delete()
-      .eq("id", params.id);
-
-    if (error) {
-      alert(error.message);
+  async function handleDownloadPDF() {
+    if (!invoiceRef.current || !invoice) {
+      toast.error("Invoice data not ready");
       return;
     }
 
-    alert("Invoice deleted successfully.");
+    setDownloading(true);
 
-    router.push("/dashboard/invoices");
+    try {
+      const canvas = await html2canvas(invoiceRef.current, {
+        scale: 2,
+        useCORS: true,
+        backgroundColor: "#ffffff",
+        logging: false,
+      });
+
+      const pdf = new jsPDF({
+        orientation: "portrait",
+        unit: "mm",
+        format: "a4",
+      });
+
+      const imgData = canvas.toDataURL("image/png");
+      const imgWidth = 210;
+      const imgHeight = (canvas.height * imgWidth) / canvas.width;
+
+      pdf.addImage(imgData, "PNG", 0, 0, imgWidth, imgHeight);
+      pdf.save(`invoice-${invoice.invoice_number}.pdf`);
+      toast.success("Invoice downloaded successfully!");
+    } catch (err) {
+      console.error("PDF download error:", err);
+      toast.error("Failed to download PDF");
+    } finally {
+      setDownloading(false);
+    }
   }
 
-  function sendReminder() {
-    alert(
-      `Reminder sent successfully to ${invoice?.client_email}`
-    );
+  async function handlePrintPDF() {
+    if (!invoiceRef.current || !invoice) {
+      toast.error("Invoice data not ready");
+      return;
+    }
+
+    try {
+      const canvas = await html2canvas(invoiceRef.current, {
+        scale: 2,
+        useCORS: true,
+        backgroundColor: "#ffffff",
+        logging: false,
+      });
+
+      const printWindow = window.open("", "");
+      if (printWindow) {
+        printWindow.document.write(`
+          <html>
+            <head>
+              <title>Invoice #${invoice.invoice_number}</title>
+              <style>
+                body { margin: 0; padding: 0; }
+                img { width: 100%; height: auto; }
+                @media print {
+                  body { margin: 0; }
+                }
+              </style>
+            </head>
+            <body>
+              <img src="${canvas.toDataURL()}" />
+              <script>window.print(); window.close();</script>
+            </body>
+          </html>
+        `);
+        printWindow.document.close();
+      }
+      toast.success("Opening print dialog...");
+    } catch (err) {
+      console.error("Print error:", err);
+      toast.error("Failed to print");
+    }
   }
 
-  function downloadPDF() {
-    if (!invoice) return;
+  async function handleDeleteInvoice() {
+    if (!confirm("Are you sure you want to delete this invoice? This action cannot be undone.")) {
+      return;
+    }
 
-    const doc = new jsPDF();
+    setDeleting(true);
 
-    doc.setFontSize(22);
-    doc.text("Invoice", 20, 20);
+    try {
+      const { error } = await supabase
+        .from("invoices")
+        .delete()
+        .eq("id", invoiceId);
 
-    doc.line(20, 26, 190, 26);
+      if (error) {
+        toast.error("Failed to delete invoice");
+        return;
+      }
 
-    doc.setFontSize(13);
+      toast.success("Invoice deleted successfully!");
+      router.push("/dashboard/invoices");
+    } catch (err) {
+      console.error("Delete error:", err);
+      toast.error("Error deleting invoice");
+    } finally {
+      setDeleting(false);
+    }
+  }
 
-    doc.text(`Invoice ID : ${invoice.id}`, 20, 40);
-    doc.text(`Client Name : ${invoice.client_name}`, 20, 52);
-    doc.text(`Client Email : ${invoice.client_email}`, 20, 64);
-    doc.text(`Amount : $${invoice.amount}`, 20, 76);
-    doc.text(`Due Date : ${invoice.due_date}`, 20, 88);
-    doc.text(`Status : ${invoice.status}`, 20, 100);
-    doc.text(`Reminder Tone : ${invoice.tone}`, 20, 112);
+  async function handleSave() {
+    if (!formData) return;
+    setSaving(true);
 
-    doc.line(20, 122, 190, 122);
+    try {
+      const { error } = await supabase
+        .from("invoices")
+        .update({
+          invoice_number: formData.invoice_number,
+          issue_date: formData.issue_date,
+          due_date: formData.due_date,
+          client_name: formData.client_name,
+          client_email: formData.client_email,
+          client_address: formData.client_address,
+          description: formData.description,
+          items: formData.items,
+          subtotal: formData.subtotal,
+          vat: formData.vat,
+          total: formData.total,
+          notes: formData.notes,
+        })
+        .eq("id", invoiceId);
 
-    doc.setFontSize(11);
+      if (error) {
+        console.error("Save error:", error);
+        toast.error("Failed to save invoice");
+        return;
+      }
 
-    doc.text(
-      "Generated by InvoiceNudge",
-      20,
-      138
-    );
+      setInvoice(formData);
+      setIsEditing(false);
+      toast.success("Invoice updated successfully!");
+    } catch (err) {
+      console.error("Save error:", err);
+      toast.error("Error saving invoice");
+    } finally {
+      setSaving(false);
+    }
+  }
 
-    doc.save(`Invoice-${invoice.id}.pdf`);
+  function calculateTotals(items: InvoiceItem[]) {
+    const subtotal = items.reduce((sum, item) => sum + item.price, 0);
+    const vat = subtotal * 0.03;
+    const total = subtotal + vat;
+    return { subtotal, vat, total };
+  }
+
+  function updateItem(index: number, field: string, value: any) {
+    if (!formData) return;
+
+    const updatedItems = [...formData.items];
+
+    if (field === "rate" || field === "qty") {
+      const rate = field === "rate" ? parseFloat(value) || 0 : updatedItems[index].rate;
+      const qty = field === "qty" ? parseInt(value) || 1 : updatedItems[index].qty;
+      updatedItems[index] = {
+        ...updatedItems[index],
+        [field]: field === "rate" ? parseFloat(value) || 0 : parseInt(value) || 1,
+        price: rate * qty,
+      };
+    } else {
+      updatedItems[index] = { ...updatedItems[index], [field]: value };
+    }
+
+    const { subtotal, vat, total } = calculateTotals(updatedItems);
+
+    setFormData({
+      ...formData,
+      items: updatedItems,
+      subtotal,
+      vat,
+      total,
+    });
+  }
+
+  function addItem() {
+    if (!formData) return;
+
+    const newItem: InvoiceItem = {
+      id: Date.now().toString(),
+      description: "New Item",
+      details: "",
+      rate: 0,
+      qty: 1,
+      price: 0,
+    };
+
+    const updatedItems = [...formData.items, newItem];
+    const { subtotal, vat, total } = calculateTotals(updatedItems);
+
+    setFormData({
+      ...formData,
+      items: updatedItems,
+      subtotal,
+      vat,
+      total,
+    });
+  }
+
+  function removeItem(index: number) {
+    if (!formData) return;
+
+    const updatedItems = formData.items.filter((_, i) => i !== index);
+    const { subtotal, vat, total } = calculateTotals(updatedItems);
+
+    setFormData({
+      ...formData,
+      items: updatedItems,
+      subtotal,
+      vat,
+      total,
+    });
   }
 
   if (loading) {
     return (
-      <div className="flex h-96 items-center justify-center">
-        <div className="h-12 w-12 animate-spin rounded-full border-4 border-blue-600 border-t-transparent"></div>
+      <div className="flex items-center justify-center h-96">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
       </div>
     );
   }
 
-  if (!invoice) {
+  if (!invoice || !formData) {
     return (
-      <div className="rounded-xl bg-white p-10 text-center shadow">
-        <h2 className="text-2xl font-bold text-red-600">
-          Invoice Not Found
-        </h2>
-
-        <Link
-          href="/dashboard/invoices"
-          className="mt-6 inline-block rounded-lg bg-blue-600 px-6 py-3 text-white"
-        >
-          Back to Invoices
-        </Link>
+      <div className="text-center py-12">
+        <p className="text-gray-500">Invoice not found</p>
       </div>
     );
   }
 
   return (
-        <div className="mx-auto max-w-5xl rounded-2xl bg-white p-8 shadow-xl">
-
-      <div className="mb-8 flex items-center justify-between">
-
+    <div className="space-y-6 pb-24">
+      {/* Header with Title and 3 Action Buttons */}
+      <div className="flex items-center justify-between bg-white p-6 rounded-xl shadow-sm ring-1 ring-gray-100">
         <div>
-          <h1 className="text-3xl font-bold text-gray-800">
-            Invoice Details
+          <h1 className="text-3xl font-bold text-gray-900">
+            Invoice #{invoice.invoice_number}
           </h1>
-
-          <p className="mt-2 text-gray-500">
-            View complete invoice information.
+          <p className="text-sm text-gray-500 mt-1">
+            Status: <span className="font-medium capitalize">{invoice.status}</span>
           </p>
         </div>
 
-        <Link
-          href="/dashboard/invoices"
-          className="rounded-lg bg-gray-700 px-5 py-3 text-white transition hover:bg-gray-800"
-        >
-          Back
-        </Link>
+        {/* 3 Buttons on Right Side */}
+        <div className="flex gap-3">
+          {!isEditing ? (
+            <>
+              {/* Edit Button */}
+              <button
+                onClick={() => setIsEditing(true)}
+                className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 transition"
+                title="Edit Invoice"
+              >
+                <Edit2 size={18} />
+                Edit
+              </button>
 
+              {/* Print PDF Button */}
+              <button
+                onClick={handlePrintPDF}
+                className="flex items-center gap-2 rounded-lg bg-green-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-green-700 transition"
+                title="Print Invoice"
+              >
+                <Printer size={18} />
+                Print
+              </button>
+
+              {/* Download PDF Button */}
+              <button
+                onClick={handleDownloadPDF}
+                disabled={downloading}
+                className="flex items-center gap-2 rounded-lg bg-purple-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-purple-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Download PDF"
+              >
+                <Download size={18} />
+                {downloading ? "..." : "Download"}
+              </button>
+
+              {/* Delete Button */}
+              <button
+                onClick={handleDeleteInvoice}
+                disabled={deleting}
+                className="flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-red-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Delete Invoice"
+              >
+                <Trash2 size={18} />
+                {deleting ? "..." : "Delete"}
+              </button>
+            </>
+          ) : (
+            <>
+              {/* Save Button */}
+              <button
+                onClick={handleSave}
+                disabled={saving}
+                className="flex items-center gap-2 rounded-lg bg-green-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-green-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Save size={18} />
+                {saving ? "Saving..." : "Save"}
+              </button>
+
+              {/* Cancel Button */}
+              <button
+                onClick={() => {
+                  setIsEditing(false);
+                  setFormData(invoice);
+                }}
+                className="flex items-center gap-2 rounded-lg bg-gray-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-gray-700 transition"
+              >
+                <X size={18} />
+                Cancel
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
-      <div className="grid gap-6 md:grid-cols-2">
-
-        <div className="rounded-xl border bg-gray-50 p-6">
-          <h3 className="mb-2 text-sm text-gray-500">
-            Client Name
-          </h3>
-
-          <p className="text-2xl font-bold">
-            {invoice.client_name}
-          </p>
+      {/* Invoice Preview and Edit Form */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Invoice Template (Left) */}
+        <div className="lg:col-span-2 rounded-xl bg-white shadow-sm ring-1 ring-gray-100 overflow-hidden">
+          <div className="overflow-auto max-h-screen">
+            <InvoiceTemplate
+              ref={invoiceRef}
+              invoiceNumber={formData.invoice_number}
+              issueDate={formData.issue_date}
+              dueDate={formData.due_date}
+              companyName={userProfile?.company_name || userProfile?.name || "Your Company"}
+              companyEmail={userProfile?.email || "email@company.com"}
+              companyPhone={userProfile?.company_phone || "+1234567890"}
+              companyWebsite={userProfile?.company_website || "www.company.com"}
+              companyAddress={userProfile?.company_address || "123 Business St"}
+              clientName={formData.client_name}
+              clientEmail={formData.client_email}
+              clientAddress={formData.client_address}
+              description={formData.description}
+              items={formData.items}
+              subtotal={formData.subtotal}
+              vat={formData.vat}
+              total={formData.total}
+              notes={formData.notes}
+            />
+          </div>
         </div>
 
-        <div className="rounded-xl border bg-gray-50 p-6">
-          <h3 className="mb-2 text-sm text-gray-500">
-            Client Email
-          </h3>
+        {/* Edit Form (Right) - Only show when editing */}
+        {isEditing && (
+          <div className="space-y-4 rounded-xl bg-white p-6 shadow-sm ring-1 ring-gray-100 h-fit sticky top-6">
+            <h3 className="font-bold text-lg text-gray-900">Edit Invoice</h3>
 
-          <p className="text-xl font-semibold break-all">
-            {invoice.client_email}
-          </p>
-        </div>
+            <div>
+              <label className="text-sm font-medium text-gray-700">Invoice #</label>
+              <input
+                type="text"
+                value={formData.invoice_number}
+                onChange={(e) =>
+                  setFormData({ ...formData, invoice_number: e.target.value })
+                }
+                className="w-full rounded border border-gray-200 p-2.5 text-sm mt-1 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none transition"
+              />
+            </div>
 
-        <div className="rounded-xl border bg-green-50 p-6">
-          <h3 className="mb-2 text-sm text-gray-500">
-            Invoice Amount
-          </h3>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-sm font-medium text-gray-700">Issue Date</label>
+                <input
+                  type="date"
+                  value={formData.issue_date}
+                  onChange={(e) =>
+                    setFormData({ ...formData, issue_date: e.target.value })
+                  }
+                  className="w-full rounded border border-gray-200 p-2.5 text-sm mt-1 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none transition"
+                />
+              </div>
+              <div>
+                <label className="text-sm font-medium text-gray-700">Due Date</label>
+                <input
+                  type="date"
+                  value={formData.due_date}
+                  onChange={(e) =>
+                    setFormData({ ...formData, due_date: e.target.value })
+                  }
+                  className="w-full rounded border border-gray-200 p-2.5 text-sm mt-1 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none transition"
+                />
+              </div>
+            </div>
 
-          <p className="text-4xl font-bold text-green-600">
-            ${invoice.amount}
-          </p>
-        </div>
+            <div>
+              <label className="text-sm font-medium text-gray-700">Client Name</label>
+              <input
+                type="text"
+                value={formData.client_name}
+                onChange={(e) =>
+                  setFormData({ ...formData, client_name: e.target.value })
+                }
+                className="w-full rounded border border-gray-200 p-2.5 text-sm mt-1 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none transition"
+              />
+            </div>
 
-        <div className="rounded-xl border bg-blue-50 p-6">
-          <h3 className="mb-2 text-sm text-gray-500">
-            Due Date
-          </h3>
+            <div>
+              <label className="text-sm font-medium text-gray-700">Client Email</label>
+              <input
+                type="email"
+                value={formData.client_email}
+                onChange={(e) =>
+                  setFormData({ ...formData, client_email: e.target.value })
+                }
+                className="w-full rounded border border-gray-200 p-2.5 text-sm mt-1 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none transition"
+              />
+            </div>
 
-          <p className="text-2xl font-bold">
-            {invoice.due_date}
-          </p>
-        </div>
+            <div>
+              <label className="text-sm font-medium text-gray-700">Client Address</label>
+              <textarea
+                value={formData.client_address}
+                onChange={(e) =>
+                  setFormData({ ...formData, client_address: e.target.value })
+                }
+                className="w-full rounded border border-gray-200 p-2.5 text-sm mt-1 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none transition"
+                rows={2}
+              />
+            </div>
 
-        <div className="rounded-xl border p-6">
-          <h3 className="mb-3 text-sm text-gray-500">
-            Status
-          </h3>
+            <div>
+              <label className="text-sm font-medium text-gray-700">Description</label>
+              <textarea
+                value={formData.description}
+                onChange={(e) =>
+                  setFormData({ ...formData, description: e.target.value })
+                }
+                className="w-full rounded border border-gray-200 p-2.5 text-sm mt-1 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none transition"
+                rows={2}
+              />
+            </div>
 
-          <span
-            className={`rounded-full px-4 py-2 text-sm font-semibold text-white ${
-              invoice.status === "paid"
-                ? "bg-green-500"
-                : invoice.status === "pending"
-                ? "bg-yellow-500"
-                : "bg-red-500"
-            }`}
-          >
-            {invoice.status.toUpperCase()}
-          </span>
-        </div>
+            <div className="border-t pt-4">
+              <div className="flex items-center justify-between mb-3">
+                <h4 className="font-semibold text-sm text-gray-900">Items</h4>
+                <button
+                  onClick={addItem}
+                  className="flex items-center gap-1 rounded bg-blue-50 px-2 py-1 text-xs font-medium text-blue-600 hover:bg-blue-100"
+                >
+                  <Plus size={14} />
+                  Add
+                </button>
+              </div>
 
-        <div className="rounded-xl border p-6">
-          <h3 className="mb-2 text-sm text-gray-500">
-            Reminder Tone
-          </h3>
+              <div className="space-y-3 max-h-64 overflow-y-auto">
+                {formData.items.map((item, idx) => (
+                  <div key={item.id} className="p-3 bg-gray-50 rounded space-y-2">
+                    <div className="flex justify-between items-start">
+                      <input
+                        type="text"
+                        placeholder="Description"
+                        value={item.description}
+                        onChange={(e) =>
+                          updateItem(idx, "description", e.target.value)
+                        }
+                        className="flex-1 rounded border border-gray-200 p-1.5 text-xs focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none"
+                      />
+                      <button
+                        onClick={() => removeItem(idx)}
+                        className="ml-2 text-red-500 hover:text-red-700"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-3 gap-2">
+                      <input
+                        type="number"
+                        placeholder="Rate"
+                        value={item.rate}
+                        onChange={(e) =>
+                          updateItem(idx, "rate", e.target.value)
+                        }
+                        className="rounded border border-gray-200 p-1.5 text-xs focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none"
+                      />
+                      <input
+                        type="number"
+                        placeholder="Qty"
+                        value={item.qty}
+                        onChange={(e) =>
+                          updateItem(idx, "qty", e.target.value)
+                        }
+                        className="rounded border border-gray-200 p-1.5 text-xs focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none"
+                      />
+                      <input
+                        type="number"
+                        placeholder="Price"
+                        value={item.price}
+                        disabled
+                        className="rounded border border-gray-200 bg-gray-100 p-1.5 text-xs text-gray-500 cursor-not-allowed"
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
 
-          <p className="text-xl font-bold capitalize">
-            {invoice.tone}
-          </p>
-        </div>
+            <div className="border-t pt-3 space-y-2 text-sm">
+              <div className="flex justify-between">
+                <span className="text-gray-600">Subtotal:</span>
+                <span className="font-medium">${formData.subtotal.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-600">VAT (3%):</span>
+                <span className="font-medium">${formData.vat.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between bg-gray-100 p-2 rounded font-bold">
+                <span>Total:</span>
+                <span>${formData.total.toFixed(2)}</span>
+              </div>
+            </div>
 
+            <div>
+              <label className="text-sm font-medium text-gray-700">Notes</label>
+              <textarea
+                value={formData.notes}
+                onChange={(e) =>
+                  setFormData({ ...formData, notes: e.target.value })
+                }
+                className="w-full rounded border border-gray-200 p-2.5 text-sm mt-1 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none transition"
+                rows={2}
+              />
+            </div>
+          </div>
+        )}
       </div>
-
-      <div className="mt-10 grid gap-4 md:grid-cols-4">
-
-        <Link
-          href={`/dashboard/invoices/edit/${invoice.id}`}
-          className="rounded-lg bg-blue-600 py-3 text-center font-semibold text-white transition hover:bg-blue-700"
-        >
-          Edit
-        </Link>
-
-        <button
-          onClick={sendReminder}
-          className="rounded-lg bg-yellow-500 py-3 font-semibold text-white transition hover:bg-yellow-600"
-        >
-          Send Reminder
-        </button>
-
-        <button
-          onClick={downloadPDF}
-          className="rounded-lg bg-green-600 py-3 font-semibold text-white transition hover:bg-green-700"
-        >
-          Download PDF
-        </button>
-
-        <button
-          onClick={deleteInvoice}
-          className="rounded-lg bg-red-600 py-3 font-semibold text-white transition hover:bg-red-700"
-        >
-          Delete
-        </button>
-
-      </div>
-
     </div>
   );
 }

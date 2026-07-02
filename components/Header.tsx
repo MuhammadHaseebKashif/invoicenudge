@@ -55,6 +55,7 @@ export default function Header({
 
   const [userName, setUserName] = useState("");
   const [userEmail, setUserEmail] = useState("");
+  const [avatarUrl, setAvatarUrl] = useState("");
 
   const [notifOpen, setNotifOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
@@ -66,6 +67,11 @@ export default function Header({
 
   useEffect(() => {
     loadUser();
+
+    // Refresh user data every 3 seconds to catch avatar updates
+    const interval = setInterval(() => {
+      loadUser();
+    }, 3000);
 
     function handleClickOutside(e: MouseEvent) {
       if (
@@ -83,26 +89,35 @@ export default function Header({
     }
 
     document.addEventListener("mousedown", handleClickOutside);
-    return () =>
+    return () => {
+      clearInterval(interval);
       document.removeEventListener("mousedown", handleClickOutside);
+    };
   }, []);
 
   async function loadUser() {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
 
-    if (!user) return;
+      if (!user) return;
 
-    setUserEmail(user.email || "");
+      setUserEmail(user.email || "");
 
-    const { data } = await supabase
-      .from("profiles")
-      .select("name")
-      .eq("id", user.id)
-      .single();
+      const { data } = await supabase
+        .from("profiles")
+        .select("name, avatar_url")
+        .eq("id", user.id)
+        .single();
 
-    setUserName(data?.name || user.email?.split("@")[0] || "User");
+      if (data) {
+        setUserName(data.name || user.email?.split("@")[0] || "User");
+        setAvatarUrl(data.avatar_url || "");
+      }
+    } catch (err) {
+      console.error("Error loading user:", err);
+    }
   }
 
   function getInitials(name: string) {
@@ -118,7 +133,7 @@ export default function Header({
 
   async function handleLogout() {
     await supabase.auth.signOut();
-    router.push("/login");
+    window.location.href = "/";
   }
 
   return (
@@ -222,9 +237,20 @@ export default function Header({
             }}
             className="flex items-center gap-2.5 rounded-full py-1 pl-1 pr-2 transition hover:bg-gray-50"
           >
-            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-blue-600 to-blue-400 text-sm font-bold text-white shadow-sm">
-              {getInitials(userName)}
-            </div>
+            {/* Avatar or Initials */}
+            {avatarUrl ? (
+              <img
+                key={avatarUrl}
+                src={avatarUrl}
+                alt={userName}
+                className="h-10 w-10 rounded-full border-2 border-blue-200 object-cover shadow-sm"
+              />
+            ) : (
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-blue-600 to-blue-400 text-sm font-bold text-white shadow-sm">
+                {getInitials(userName)}
+              </div>
+            )}
+
             <div className="hidden text-left sm:block">
               <h3 className="text-sm font-semibold text-gray-900">
                 {userName || "Loading..."}

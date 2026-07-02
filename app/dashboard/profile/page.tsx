@@ -101,21 +101,62 @@ export default function ProfilePage() {
       const fileExt = file.name.split(".").pop();
       const fileName = `${userId}-${Date.now()}.${fileExt}`;
 
+      console.log("Uploading to storage:", fileName);
+      console.log("User ID:", userId);
+
+      // Upload to storage
       const { error: uploadError } = await supabase.storage
         .from("avatars")
         .upload(fileName, file, { upsert: true });
 
       if (uploadError) {
-        toast.error("Failed to upload image");
+        console.error("Storage error:", uploadError);
+        toast.error(`Upload failed: ${uploadError.message}`);
         setUploadingAvatar(false);
         return;
       }
 
-      const { data } = supabase.storage.from("avatars").getPublicUrl(fileName);
-      setAvatarUrl(data.publicUrl);
+      // Get public URL
+      const { data: publicUrl } = supabase.storage
+        .from("avatars")
+        .getPublicUrl(fileName);
+
+      const avatarPublicUrl = publicUrl.publicUrl;
+      console.log("Avatar URL:", avatarPublicUrl);
+
+      // Save to database with UPSERT
+      const { error: updateError } = await supabase
+        .from("profiles")
+        .upsert(
+          {
+            id: userId,
+            avatar_url: avatarPublicUrl,
+          },
+          {
+            onConflict: "id",
+          }
+        );
+
+      if (updateError) {
+        console.error("Database error:", updateError);
+        toast.error(`Save failed: ${updateError.message}`);
+        setUploadingAvatar(false);
+        return;
+      }
+
+      setAvatarUrl(avatarPublicUrl);
+      setInitialState(
+        JSON.stringify({
+          name,
+          description,
+          avatarUrl: avatarPublicUrl,
+        })
+      );
+
       toast.success("Avatar uploaded successfully!");
-    } catch (err) {
-      toast.error("Failed to upload avatar");
+    } catch (err: any) {
+      console.error("Upload error:", err);
+      toast.error(`Error: ${err.message}`);
     } finally {
       setUploadingAvatar(false);
     }
@@ -155,6 +196,7 @@ export default function ProfilePage() {
 
   function getPasswordStrength(pwd: string) {
     if (!pwd) return { label: "", score: 0, color: "" };
+
     let score = 0;
     if (pwd.length >= 6) score++;
     if (pwd.length >= 10) score++;
@@ -249,6 +291,7 @@ export default function ProfilePage() {
           <div className="flex items-end gap-4">
             {avatarUrl ? (
               <img
+                key={avatarUrl}
                 src={avatarUrl}
                 alt={name}
                 className="-mt-10 h-20 w-20 rounded-2xl border-4 border-white object-cover shadow-md"
@@ -377,6 +420,9 @@ export default function ProfilePage() {
                 className="w-full cursor-not-allowed rounded-lg border border-gray-200 bg-gray-50 p-3 pl-10 text-sm text-gray-500"
               />
             </div>
+            <p className="mt-1.5 text-xs text-gray-400">
+              Contact support if you need to change your email address.
+            </p>
           </div>
 
           <div className="flex justify-end gap-3 pt-2">
@@ -396,7 +442,7 @@ export default function ProfilePage() {
         </div>
       </div>
 
-      {/* Password section (same as before) */}
+      {/* Password section */}
       <div className="rounded-2xl bg-white p-8 shadow-sm ring-1 ring-gray-100">
         <div className="mb-6 flex items-center gap-3">
           <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-green-50">

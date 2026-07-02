@@ -1,8 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { supabase } from "../../../lib/supabase";
+import html2canvas from "html2canvas-pro";
+import jsPDF from "jspdf";
+import toast from "react-hot-toast";
+import InvoiceTemplate from "@/components/InvoiceTemplate";
 import {
   Pencil,
   Trash2,
@@ -13,14 +17,41 @@ import {
   Eye,
 } from "lucide-react";
 
+interface InvoiceItem {
+  id: string;
+  description: string;
+  details: string;
+  rate: number;
+  qty: number;
+  price: number;
+}
+
 interface Invoice {
   id: number;
+  invoice_number?: string;
   client_name: string;
   client_email: string;
+  client_address?: string;
   amount: number;
   due_date: string;
+  issue_date?: string;
   status: string;
   tone: string;
+  description?: string;
+  items?: InvoiceItem[];
+  subtotal?: number;
+  vat?: number;
+  total?: number;
+  notes?: string;
+}
+
+interface UserProfile {
+  name: string;
+  email: string;
+  company_name?: string;
+  company_phone?: string;
+  company_address?: string;
+  company_website?: string;
 }
 
 export default function InvoicesPage() {
@@ -34,10 +65,33 @@ export default function InvoicesPage() {
   // ✅ Currency from Settings
   const [currency, setCurrency] = useState("USD");
 
+  // ✅ PDF download state
+  const [downloadingId, setDownloadingId] = useState<number | null>(null);
+  const [pdfInvoice, setPdfInvoice] = useState<Invoice | null>(null);
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const pdfRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     fetchInvoices();
     loadCurrency();
+    loadUserProfile();
   }, []);
+
+  async function loadUserProfile() {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) return;
+
+    const { data } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("id", user.id)
+      .single();
+
+    if (data) setUserProfile(data);
+  }
 
   async function loadCurrency() {
     const {
@@ -146,6 +200,76 @@ export default function InvoicesPage() {
     document.body.removeChild(link);
   }
 
+  // ✅ Step 1: fetch full invoice data and set it to render hidden template
+  async function handleDownloadPDF(invoiceId: number) {
+    setDownloadingId(invoiceId);
+
+    const { data, error } = await supabase
+      .from("invoices")
+      .select("*")
+      .eq("id", invoiceId)
+      .single();
+
+    if (error || !data) {
+      toast.error("Failed to load invoice for download");
+      setDownloadingId(null);
+      return;
+    }
+
+    setPdfInvoice(data);
+  }
+
+  // ✅ Step 2: once hidden template renders with data, generate the PDF
+  useEffect(() => {
+    if (!pdfInvoice) return;
+
+    const generate = async () => {
+      // wait one tick for the hidden template to paint
+      await new Promise((resolve) => setTimeout(resolve, 150));
+
+      if (!pdfRef.current) {
+        toast.error("Failed to generate PDF");
+        setDownloadingId(null);
+        setPdfInvoice(null);
+        return;
+      }
+
+      try {
+        const canvas = await html2canvas(pdfRef.current, {
+          scale: 2,
+          useCORS: true,
+          backgroundColor: "#ffffff",
+          logging: false,
+        });
+
+        const pdf = new jsPDF({
+          orientation: "portrait",
+          unit: "mm",
+          format: "a4",
+        });
+
+        const imgData = canvas.toDataURL("image/png");
+        const imgWidth = 210;
+        const imgHeight = (canvas.height * imgWidth) / canvas.width;
+
+        pdf.addImage(imgData, "PNG", 0, 0, imgWidth, imgHeight);
+        pdf.save(
+          `invoice-${pdfInvoice.invoice_number || pdfInvoice.id}.pdf`
+        );
+
+        toast.success("Invoice downloaded!");
+      } catch (err) {
+        console.error("PDF generation error:", err);
+        toast.error("Failed to download PDF");
+      } finally {
+        setDownloadingId(null);
+        setPdfInvoice(null);
+      }
+    };
+
+    generate();
+  }, [pdfInvoice]);
+
   const filteredInvoices = useMemo(() => {
     let data = [...invoices];
 
@@ -182,240 +306,289 @@ export default function InvoicesPage() {
 
     return data;
   }, [invoices, search, statusFilter, sortBy]);
+
   return (
-  <div className="rounded-2xl bg-white p-8 shadow-lg">
+    <div className="rounded-2xl bg-white p-8 shadow-lg">
 
-    {/* Header */}
-    <div className="mb-8 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+      {/* Header */}
+      <div className="mb-8 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
 
-      <div>
-        <h1 className="text-3xl font-bold text-gray-800">
-          All Invoices
-        </h1>
+        <div>
+          <h1 className="text-3xl font-bold text-gray-800">
+            All Invoices
+          </h1>
 
-        <p className="mt-2 text-gray-500">
-          Manage, edit and track your invoices.
-        </p>
-      </div>
+          <p className="mt-2 text-gray-500">
+            Manage, edit and track your invoices.
+          </p>
+        </div>
 
-      <div className="flex flex-wrap gap-3">
+        <div className="flex flex-wrap gap-3">
 
-        <button
-          onClick={() => exportCSV(filteredInvoices)}
-          className="flex items-center gap-2 rounded-lg bg-green-600 px-5 py-3 text-white hover:bg-green-700"
-        >
-          <Download size={18} />
-          Export CSV
-        </button>
-
-        <Link
-          href="/dashboard/new"
-          className="flex items-center gap-2 rounded-lg bg-blue-600 px-5 py-3 text-white hover:bg-blue-700"
-        >
-          <Plus size={18} />
-          Add Invoice
-        </Link>
-
-      </div>
-
-    </div>
-
-    {/* Filters */}
-
-    <div className="mb-8 grid gap-4 md:grid-cols-3">
-
-      <div className="relative">
-
-        <Search
-          size={18}
-          className="absolute left-3 top-4 text-gray-400"
-        />
-
-        <input
-          type="text"
-          placeholder="Search invoices..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="w-full rounded-lg border py-3 pl-10 pr-4 focus:border-blue-500 focus:outline-none"
-        />
-
-      </div>
-
-      <select
-        value={statusFilter}
-        onChange={(e) => setStatusFilter(e.target.value)}
-        className="rounded-lg border p-3"
-      >
-        <option value="all">All Status</option>
-        <option value="pending">Pending</option>
-        <option value="paid">Paid</option>
-        <option value="overdue">Overdue</option>
-      </select>
-
-      <select
-        value={sortBy}
-        onChange={(e) => setSortBy(e.target.value)}
-        className="rounded-lg border p-3"
-      >
-        <option value="none">No Sorting</option>
-        <option value="amount">Sort by Amount</option>
-        <option value="due">Sort by Due Date</option>
-      </select>
-
-    </div>
-
-    {loading ? (
-
-      <div className="py-20 text-center">
-
-        <div className="mx-auto h-12 w-12 animate-spin rounded-full border-4 border-blue-600 border-t-transparent"></div>
-
-        <p className="mt-5 text-gray-500">
-          Loading invoices...
-        </p>
-
-      </div>
-
-    ) : filteredInvoices.length === 0 ? (
-
-      <div className="rounded-xl border-2 border-dashed border-gray-300 py-20 text-center">
-
-        <h2 className="text-2xl font-bold">
-          No Invoices Found
-        </h2>
-
-        <p className="mt-2 text-gray-500">
-          Create your first invoice.
-        </p>
-
-        <Link
-          href="/dashboard/new"
-          className="mt-6 inline-block rounded-lg bg-blue-600 px-6 py-3 text-white hover:bg-blue-700"
-        >
-          Add Invoice
-        </Link>
-
-      </div>
-
-    ) : (
-
-      <div className="overflow-x-auto rounded-xl border">
-
-        <table className="w-full">
-
-          <thead className="bg-gray-100">
-
-            <tr>
-
-              <th className="px-4 py-4 text-left">Client</th>
-              <th>Email</th>
-              <th>Amount</th>
-              <th>Due Date</th>
-              <th>Status</th>
-              <th>Tone</th>
-              <th className="text-center">Actions</th>
-
-            </tr>
-
-          </thead>
-
-          <tbody>
-            {filteredInvoices.map((invoice) => (
-
-  <tr
-    key={invoice.id}
-    className="border-t hover:bg-gray-50"
-  >
-
-    <td className="px-4 py-4 font-medium">
-      {invoice.client_name}
-    </td>
-
-    <td>{invoice.client_email}</td>
-
-    <td className="font-semibold text-green-600">
-      {currency === "PKR"
-        ? `Rs ${invoice.amount}`
-        : `$${invoice.amount}`}
-    </td>
-
-    <td>{invoice.due_date}</td>
-
-    <td>
-
-      <span
-        className={`rounded-full px-3 py-1 text-xs font-semibold text-white ${
-          invoice.status === "paid"
-            ? "bg-green-500"
-            : invoice.status === "pending"
-            ? "bg-yellow-500"
-            : "bg-red-500"
-        }`}
-      >
-        {invoice.status}
-      </span>
-
-    </td>
-
-    <td className="capitalize">
-      {invoice.tone}
-    </td>
-
-    <td>
-
-      <div className="flex justify-center gap-2">
-
-        <Link
-          href={`/dashboard/invoices/${invoice.id}`}
-          className="rounded-lg bg-indigo-600 p-2 text-white hover:bg-indigo-700"
-          title="View"
-        >
-          <Eye size={18} />
-        </Link>
-
-        <Link
-          href={`/dashboard/invoices/edit/${invoice.id}`}
-          className="rounded-lg bg-blue-600 p-2 text-white hover:bg-blue-700"
-          title="Edit"
-        >
-          <Pencil size={18} />
-        </Link>
-
-        {invoice.status !== "paid" && (
           <button
-            onClick={() => markAsPaid(invoice.id)}
-            className="rounded-lg bg-green-600 p-2 text-white hover:bg-green-700"
-            title="Mark as Paid"
+            onClick={() => exportCSV(filteredInvoices)}
+            className="flex items-center gap-2 rounded-lg bg-green-600 px-5 py-3 text-white hover:bg-green-700"
           >
-            <CheckCircle size={18} />
+            <Download size={18} />
+            Export CSV
           </button>
-        )}
 
-        <button
-          onClick={() => deleteInvoice(invoice.id)}
-          className="rounded-lg bg-red-600 p-2 text-white hover:bg-red-700"
-          title="Delete"
+          <Link
+            href="/dashboard/new"
+            className="flex items-center gap-2 rounded-lg bg-blue-600 px-5 py-3 text-white hover:bg-blue-700"
+          >
+            <Plus size={18} />
+            Add Invoice
+          </Link>
+
+        </div>
+
+      </div>
+
+      {/* Filters */}
+
+      <div className="mb-8 grid gap-4 md:grid-cols-3">
+
+        <div className="relative">
+
+          <Search
+            size={18}
+            className="absolute left-3 top-4 text-gray-400"
+          />
+
+          <input
+            type="text"
+            placeholder="Search invoices..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="w-full rounded-lg border py-3 pl-10 pr-4 focus:border-blue-500 focus:outline-none"
+          />
+
+        </div>
+
+        <select
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value)}
+          className="rounded-lg border p-3"
         >
-          <Trash2 size={18} />
-        </button>
+          <option value="all">All Status</option>
+          <option value="pending">Pending</option>
+          <option value="paid">Paid</option>
+          <option value="overdue">Overdue</option>
+        </select>
+
+        <select
+          value={sortBy}
+          onChange={(e) => setSortBy(e.target.value)}
+          className="rounded-lg border p-3"
+        >
+          <option value="none">No Sorting</option>
+          <option value="amount">Sort by Amount</option>
+          <option value="due">Sort by Due Date</option>
+        </select>
 
       </div>
 
-    </td>
+      {loading ? (
 
-  </tr>
+        <div className="py-20 text-center">
 
-))}
+          <div className="mx-auto h-12 w-12 animate-spin rounded-full border-4 border-blue-600 border-t-transparent"></div>
 
-          </tbody>
+          <p className="mt-5 text-gray-500">
+            Loading invoices...
+          </p>
 
-        </table>
+        </div>
 
-      </div>
+      ) : filteredInvoices.length === 0 ? (
 
-    )}
+        <div className="rounded-xl border-2 border-dashed border-gray-300 py-20 text-center">
 
-  </div>
-);
+          <h2 className="text-2xl font-bold">
+            No Invoices Found
+          </h2>
+
+          <p className="mt-2 text-gray-500">
+            Create your first invoice.
+          </p>
+
+          <Link
+            href="/dashboard/new"
+            className="mt-6 inline-block rounded-lg bg-blue-600 px-6 py-3 text-white hover:bg-blue-700"
+          >
+            Add Invoice
+          </Link>
+
+        </div>
+
+      ) : (
+
+        <div className="overflow-x-auto rounded-xl border">
+
+          <table className="w-full">
+
+            <thead className="bg-gray-100">
+
+              <tr>
+
+                <th className="px-4 py-4 text-left">Client</th>
+                <th>Email</th>
+                <th>Amount</th>
+                <th>Due Date</th>
+                <th>Status</th>
+                <th>Tone</th>
+                <th className="text-center">Actions</th>
+
+              </tr>
+
+            </thead>
+
+            <tbody>
+              {filteredInvoices.map((invoice) => (
+
+                <tr
+                  key={invoice.id}
+                  className="border-t hover:bg-gray-50"
+                >
+
+                  <td className="px-4 py-4 font-medium">
+                    {invoice.client_name}
+                  </td>
+
+                  <td>{invoice.client_email}</td>
+
+                  <td className="font-semibold text-green-600">
+                    {currency === "PKR"
+                      ? `Rs ${invoice.amount}`
+                      : `$${invoice.amount}`}
+                  </td>
+
+                  <td>{invoice.due_date}</td>
+
+                  <td>
+
+                    <span
+                      className={`rounded-full px-3 py-1 text-xs font-semibold text-white ${
+                        invoice.status === "paid"
+                          ? "bg-green-500"
+                          : invoice.status === "pending"
+                          ? "bg-yellow-500"
+                          : "bg-red-500"
+                      }`}
+                    >
+                      {invoice.status}
+                    </span>
+
+                  </td>
+
+                  <td className="capitalize">
+                    {invoice.tone}
+                  </td>
+
+                  <td>
+
+                    <div className="flex justify-center gap-2">
+
+                      <Link
+                        href={`/dashboard/invoices/${invoice.id}`}
+                        className="rounded-lg bg-indigo-600 p-2 text-white hover:bg-indigo-700"
+                        title="View"
+                      >
+                        <Eye size={18} />
+                      </Link>
+
+                      <Link
+                        href={`/dashboard/invoices/${invoice.id}`}
+                        className="rounded-lg bg-blue-600 p-2 text-white hover:bg-blue-700"
+                        title="Edit"
+                      >
+                        <Pencil size={18} />
+                      </Link>
+
+                      {/* ✅ Download / Print PDF button */}
+                      <button
+                        onClick={() => handleDownloadPDF(invoice.id)}
+                        disabled={downloadingId === invoice.id}
+                        className="rounded-lg bg-purple-600 p-2 text-white hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                        title="Download PDF"
+                      >
+                        {downloadingId === invoice.id ? (
+                          <div className="h-[18px] w-[18px] animate-spin rounded-full border-2 border-white border-t-transparent" />
+                        ) : (
+                          <Download size={18} />
+                        )}
+                      </button>
+
+                      {invoice.status !== "paid" && (
+                        <button
+                          onClick={() => markAsPaid(invoice.id)}
+                          className="rounded-lg bg-green-600 p-2 text-white hover:bg-green-700"
+                          title="Mark as Paid"
+                        >
+                          <CheckCircle size={18} />
+                        </button>
+                      )}
+
+                      <button
+                        onClick={() => deleteInvoice(invoice.id)}
+                        className="rounded-lg bg-red-600 p-2 text-white hover:bg-red-700"
+                        title="Delete"
+                      >
+                        <Trash2 size={18} />
+                      </button>
+
+                    </div>
+
+                  </td>
+
+                </tr>
+
+              ))}
+
+            </tbody>
+
+          </table>
+
+        </div>
+
+      )}
+
+      {/* ✅ Hidden invoice template used only to generate the PDF image */}
+      {pdfInvoice && (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: "-9999px",
+            zIndex: -1,
+          }}
+        >
+          <InvoiceTemplate
+            ref={pdfRef}
+            invoiceNumber={pdfInvoice.invoice_number || String(pdfInvoice.id)}
+            issueDate={pdfInvoice.issue_date || ""}
+            dueDate={pdfInvoice.due_date}
+            companyName={
+              userProfile?.company_name || userProfile?.name || "Your Company"
+            }
+            companyEmail={userProfile?.email || ""}
+            companyPhone={userProfile?.company_phone || ""}
+            companyWebsite={userProfile?.company_website || ""}
+            companyAddress={userProfile?.company_address || ""}
+            clientName={pdfInvoice.client_name}
+            clientEmail={pdfInvoice.client_email}
+            clientAddress={pdfInvoice.client_address || ""}
+            description={pdfInvoice.description || ""}
+            items={pdfInvoice.items || []}
+            subtotal={pdfInvoice.subtotal || pdfInvoice.amount || 0}
+            vat={pdfInvoice.vat || 0}
+            total={pdfInvoice.total || pdfInvoice.amount || 0}
+            notes={pdfInvoice.notes || ""}
+          />
+        </div>
+      )}
+
+    </div>
+  );
 }
-         
