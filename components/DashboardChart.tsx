@@ -6,6 +6,7 @@ import { supabase } from "../lib/supabase";
 export default function DashboardChart() {
 
   const [loading, setLoading] = useState(true);
+  const [currency, setCurrency] = useState("USD");
 
   const [data, setData] = useState([
     { month: "Jan", value: 0 },
@@ -24,7 +25,30 @@ export default function DashboardChart() {
 
   useEffect(() => {
     fetchRevenue();
+    loadCurrency();
   }, []);
+
+  async function loadCurrency() {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) return;
+
+    const { data } = await supabase
+      .from("settings")
+      .select("currency")
+      .eq("id", user.id)
+      .single();
+
+    if (data?.currency) {
+      setCurrency(data.currency);
+    }
+  }
+
+  function getCurrencySymbol(currency: string) {
+    return currency === "PKR" ? "Rs " : "$";
+  }
 
   async function fetchRevenue() {
     const {
@@ -102,7 +126,7 @@ export default function DashboardChart() {
               className="flex flex-1 flex-col items-center"
             >
               <span className="mb-2 text-xs font-semibold text-gray-600">
-                ${item.value}
+                {getCurrencySymbol(currency)}{item.value}
               </span>
 
               <div

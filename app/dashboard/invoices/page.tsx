@@ -54,6 +54,10 @@ interface UserProfile {
   company_website?: string;
 }
 
+function getCurrencySymbol(currency: string) {
+  return currency === "PKR" ? "Rs " : "$";
+}
+
 export default function InvoicesPage() {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [loading, setLoading] = useState(true);
@@ -459,9 +463,8 @@ export default function InvoicesPage() {
                   <td>{invoice.client_email}</td>
 
                   <td className="font-semibold text-green-600">
-                    {currency === "PKR"
-                      ? `Rs ${invoice.amount}`
-                      : `$${invoice.amount}`}
+                    {getCurrencySymbol(currency)}
+                    {invoice.amount}
                   </td>
 
                   <td>{invoice.due_date}</td>
@@ -585,6 +588,8 @@ export default function InvoicesPage() {
             vat={pdfInvoice.vat || 0}
             total={pdfInvoice.total || pdfInvoice.amount || 0}
             notes={pdfInvoice.notes || ""}
+            status={pdfInvoice.status}
+            currency={currency}
           />
         </div>
       )}

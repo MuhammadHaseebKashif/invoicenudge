@@ -123,6 +123,8 @@ Thank you.`;
         client_email: invoice.client_email,
         subject,
         message,
+        status: "Sent",
+        sent_at: new Date().toISOString(),
       },
     ]);
 

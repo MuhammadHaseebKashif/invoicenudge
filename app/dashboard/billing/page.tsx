@@ -15,10 +15,34 @@ interface Invoice {
 export default function BillingPage() {
   const [loading, setLoading] = useState(true);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [currency, setCurrency] = useState("USD");
 
   useEffect(() => {
     loadBilling();
+    loadCurrency();
   }, []);
+
+  async function loadCurrency() {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) return;
+
+    const { data } = await supabase
+      .from("settings")
+      .select("currency")
+      .eq("id", user.id)
+      .single();
+
+    if (data?.currency) {
+      setCurrency(data.currency);
+    }
+  }
+
+  function getCurrencySymbol(currency: string) {
+    return currency === "PKR" ? "Rs " : "$";
+  }
 
   async function loadBilling() {
     const {
@@ -153,10 +177,12 @@ export default function BillingPage() {
             paid={paidInvoices}
             pending={pendingInvoices}
             overdue={overdueInvoices}
+            currency={currency}
           />
 
           <BillingChart
             data={chartData}
+            currency={currency}
           />
 
           <div className="rounded-xl bg-white p-6 shadow">
@@ -213,7 +239,7 @@ export default function BillingPage() {
                       </td>
 
                       <td>
-                        ${invoice.amount}
+                        {getCurrencySymbol(currency)}{invoice.amount}
                       </td>
 
                       <td>
@@ -254,4 +280,4 @@ export default function BillingPage() {
 
     </div>
   );
-}   
+}

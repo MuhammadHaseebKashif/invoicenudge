@@ -16,10 +16,34 @@ interface Invoice {
 export default function RecentInvoices() {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [loading, setLoading] = useState(true);
+  const [currency, setCurrency] = useState("USD");
 
   useEffect(() => {
     fetchInvoices();
+    loadCurrency();
   }, []);
+
+  async function loadCurrency() {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) return;
+
+    const { data } = await supabase
+      .from("settings")
+      .select("currency")
+      .eq("id", user.id)
+      .single();
+
+    if (data?.currency) {
+      setCurrency(data.currency);
+    }
+  }
+
+  function getCurrencySymbol(currency: string) {
+    return currency === "PKR" ? "Rs " : "$";
+  }
 
   async function fetchInvoices() {
     const {
@@ -117,7 +141,7 @@ export default function RecentInvoices() {
 
                 <td>{invoice.client_email}</td>
 
-                <td>${invoice.amount}</td>
+                <td>{getCurrencySymbol(currency)}{invoice.amount}</td>
 
                 <td>
 

@@ -32,17 +32,7 @@ interface InvoiceTemplateProps {
 }
 
 function getCurrencySymbol(currency?: string) {
-  switch (currency) {
-    case "PKR":
-      return "Rs ";
-    case "EUR":
-      return "€";
-    case "GBP":
-      return "£";
-    case "USD":
-    default:
-      return "$";
-  }
+  return currency === "PKR" ? "Rs " : "$";
 }
 
 const InvoiceTemplate = React.forwardRef<HTMLDivElement, InvoiceTemplateProps>(

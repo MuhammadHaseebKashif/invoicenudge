@@ -5,6 +5,7 @@ interface Props {
   paid: number;
   pending: number;
   overdue: number;
+  currency?: string;
 }
 
 export default function BillingStats({
@@ -12,7 +13,10 @@ export default function BillingStats({
   paid,
   pending,
   overdue,
+  currency = "USD",
 }: Props) {
+  const symbol = currency === "PKR" ? "Rs " : "$";
+
   return (
     <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-4">
 
@@ -22,7 +26,7 @@ export default function BillingStats({
         </h3>
 
         <h1 className="mt-3 text-3xl font-bold text-green-600">
-          ${totalRevenue}
+          {symbol}{totalRevenue}
         </h1>
       </div>
 
